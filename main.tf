@@ -545,6 +545,7 @@ resource "aws_cloudwatch_event_target" "sns" {
 variable "notification_email" {
   description = "Email address for deployment notifications"
   type        = string
+  default     = "rupa-sri.nunna@capgemini.com"
 }
 
 resource "aws_sns_topic_subscription" "email" {
