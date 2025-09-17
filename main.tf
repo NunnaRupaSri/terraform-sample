@@ -1,42 +1,8 @@
-terraform {
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
-    }
-    tls = {
-      source  = "hashicorp/tls"
-      version = "~> 4.0"
-    }
-  }
-}
-
 provider "aws" {
   region = "eu-west-1"
 }
 
-provider "tls" {}
-
-resource "random_id" "suffix" {
-  byte_length = 4
-}
-
 data "aws_availability_zones" "available" {}
-
-data "aws_ami" "ubuntu" {
-  most_recent = true
-  owners      = ["099720109477"] # Canonical
-
-  filter {
-    name   = "name"
-    values = ["ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*"]
-  }
-
-  filter {
-    name   = "virtualization-type"
-    values = ["hvm"]
-  }
-}
 
 resource "aws_vpc" "main" {
   cidr_block           = "10.0.0.0/16"
@@ -75,7 +41,7 @@ resource "aws_route_table_association" "public" {
   route_table_id = aws_route_table.public.id
 }
 resource "aws_iam_instance_profile" "ec2_codedeploy_profile" {
-  name = "ec2-codedeploy-profile-role"
+  name = "ec2-codedeploy-profile"
   role = aws_iam_role.ec2_codedeploy_role.name
 }
 resource "aws_iam_role" "ec2_codedeploy_role" {
@@ -143,9 +109,9 @@ resource "aws_security_group" "ec2_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 }
-resource "aws_launch_template" "html_template" {
-  name_prefix   = "html-launch-template-"
-  image_id      = data.aws_ami.ubuntu.id
+resource "aws_launch_template" "nodejs_template" {
+  name_prefix   = "nodejs-launch-template-"
+  image_id      = "ami-0bc691261a82b32bc"
   instance_type = "t2.micro"
 
   vpc_security_group_ids = [aws_security_group.ec2_sg.id]
@@ -158,20 +124,20 @@ resource "aws_launch_template" "html_template" {
   tag_specifications {
     resource_type = "instance"
     tags = {
-      Name = "HTMLAppInstance"
+      Name = "NodeJSAppInstance"
     }
   }
 }
 
-resource "aws_autoscaling_group" "html_asg" {
-  name                      = "html-asg"
+resource "aws_autoscaling_group" "nodejs_asg" {
+  name                      = "nodejs-asg"
   max_size                  = 3
   min_size                  = 2
   desired_capacity          = 2
   vpc_zone_identifier       = aws_subnet.public[*].id
 
   launch_template {
-    id      = aws_launch_template.html_template.id
+    id      = aws_launch_template.nodejs_template.id
     version = "$Latest"
   }
 
@@ -179,7 +145,7 @@ resource "aws_autoscaling_group" "html_asg" {
 
   tag {
     key                 = "Name"
-    value               = "HTMLAppInstance"
+    value               = "NodeJSAppInstance"
     propagate_at_launch = true
   }
 
@@ -190,19 +156,12 @@ resource "aws_autoscaling_group" "html_asg" {
 
 resource "aws_security_group" "alb_sg" {
   name        = "alb-sg"
-  description = "Allow HTTP and HTTPS traffic for ALB"
+  description = "Allow HTTP traffic for ALB"
   vpc_id      = aws_vpc.main.id
 
   ingress {
     from_port   = 80
     to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    from_port   = 443
-    to_port     = 443
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
@@ -243,62 +202,10 @@ resource "aws_lb_target_group" "app_tg" {
   }
 }
 
-# Self-signed certificate for HTTPS (replace with ACM certificate in production)
-resource "tls_private_key" "app_key" {
-  algorithm = "RSA"
-  rsa_bits  = 2048
-}
-
-resource "tls_self_signed_cert" "app_cert" {
-  private_key_pem = tls_private_key.app_key.private_key_pem
-
-  subject {
-    common_name  = "app.example.com"
-    organization = "Example Organization"
-  }
-
-  validity_period_hours = 8760 # 1 year
-
-  allowed_uses = [
-    "key_encipherment",
-    "digital_signature",
-    "server_auth",
-  ]
-}
-
-resource "aws_acm_certificate" "app_cert" {
-  private_key      = tls_private_key.app_key.private_key_pem
-  certificate_body = tls_self_signed_cert.app_cert.cert_pem
-
-  lifecycle {
-    create_before_destroy = true
-  }
-}
-
-# HTTP listener that redirects to HTTPS
-resource "aws_lb_listener" "app_listener_http" {
+resource "aws_lb_listener" "app_listener" {
   load_balancer_arn = aws_lb.app_alb.arn
   port              = 80
   protocol          = "HTTP"
-
-  default_action {
-    type = "redirect"
-
-    redirect {
-      port        = "443"
-      protocol    = "HTTPS"
-      status_code = "HTTP_301"
-    }
-  }
-}
-
-# HTTPS listener
-resource "aws_lb_listener" "app_listener_https" {
-  load_balancer_arn = aws_lb.app_alb.arn
-  port              = 443
-  protocol          = "HTTPS"
-  ssl_policy        = "ELBSecurityPolicy-TLS-1-2-2017-01"
-  certificate_arn   = aws_acm_certificate.app_cert.arn
 
   default_action {
     type             = "forward"
@@ -314,19 +221,21 @@ resource "aws_cloudwatch_metric_alarm" "cpu_alarm" {
   namespace           = "AWS/EC2"
   period              = 120
   statistic           = "Average"
-  threshold           = 70
-  alarm_description   = "Alarm when CPU exceeds 70%"
+  threshold           = 50
+  alarm_description   = "Alarm when CPU exceeds 50%"
 
   dimensions = {
-    AutoScalingGroupName = aws_autoscaling_group.html_asg.name
+    AutoScalingGroupName = aws_autoscaling_group.nodejs_asg.name
   }
+}
+
+resource "random_id" "suffix" {
+  byte_length = 4
 }
 
 resource "aws_s3_bucket" "pipeline_artifacts" {
   bucket = "pipeline-artifacts-bucket-${random_id.suffix.hex}"
 }
-
-
 
 resource "aws_iam_role" "codepipeline_role" {
   name = "codepipeline-role"
@@ -455,14 +364,11 @@ resource "aws_codepipeline" "app_pipeline" {
   }
 }
 
-
-
 resource "aws_codebuild_project" "app_build_project" {
   name          = "app-build-project"
-  description   = "Build project for HTML app"
+  description   = "Build project for Node.js app"
   build_timeout = 20
   service_role  = aws_iam_role.codepipeline_role.arn
-
 
   artifacts {
     type = "CODEPIPELINE"
@@ -481,20 +387,20 @@ resource "aws_codebuild_project" "app_build_project" {
 }
 
 resource "aws_codedeploy_app" "app" {
-  name             = "html-app"
+  name             = "nodejs-app"
   compute_platform = "Server"
 }
 
 resource "aws_codedeploy_deployment_group" "app_deployment_group" {
   app_name              = aws_codedeploy_app.app.name
-  deployment_group_name = "html-app-deployment-group"
+  deployment_group_name = "nodejs-app-deployment-group"
   service_role_arn      = aws_iam_role.codepipeline_role.arn
 
   ec2_tag_set {
     ec2_tag_filter {
       key   = "Name"
       type  = "KEY_AND_VALUE"
-      value = "HTMLAppInstance"
+      value = "NodeJSAppInstance"
     }
   }
 
@@ -505,11 +411,8 @@ resource "aws_codedeploy_deployment_group" "app_deployment_group" {
   }
 }
 
-
-
 resource "aws_sns_topic" "deployment_notifications" {
-  name              = "deployment-notifications"
-
+  name = "deployment-notifications"
 }
 
 resource "aws_cloudwatch_event_rule" "codedeploy_notifications" {
