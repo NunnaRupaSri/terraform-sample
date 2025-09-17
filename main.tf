@@ -1,6 +1,21 @@
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+    tls = {
+      source  = "hashicorp/tls"
+      version = "~> 4.0"
+    }
+  }
+}
+
 provider "aws" {
   region = "eu-west-1"
 }
+
+provider "tls" {}
 
 data "aws_availability_zones" "available" {}
 
@@ -115,7 +130,7 @@ resource "aws_launch_template" "nodejs_template" {
   instance_type = "t2.micro"
 
   vpc_security_group_ids = [aws_security_group.ec2_sg.id]
-  user_data              = filebase64("scripts/install.sh")
+  user_data              = filebase64("user_data.sh")
   
   iam_instance_profile {
     name = aws_iam_instance_profile.ec2_codedeploy_profile.name
@@ -156,12 +171,19 @@ resource "aws_autoscaling_group" "nodejs_asg" {
 
 resource "aws_security_group" "alb_sg" {
   name        = "alb-sg"
-  description = "Allow HTTP traffic for ALB"
+  description = "Allow HTTP and HTTPS traffic for ALB"
   vpc_id      = aws_vpc.main.id
 
   ingress {
     from_port   = 80
     to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    from_port   = 443
+    to_port     = 443
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
@@ -202,10 +224,62 @@ resource "aws_lb_target_group" "app_tg" {
   }
 }
 
-resource "aws_lb_listener" "app_listener" {
+# Self-signed certificate for HTTPS (replace with ACM certificate in production)
+resource "tls_private_key" "app_key" {
+  algorithm = "RSA"
+  rsa_bits  = 2048
+}
+
+resource "tls_self_signed_cert" "app_cert" {
+  private_key_pem = tls_private_key.app_key.private_key_pem
+
+  subject {
+    common_name  = "app.example.com"
+    organization = "Example Organization"
+  }
+
+  validity_period_hours = 8760 # 1 year
+
+  allowed_uses = [
+    "key_encipherment",
+    "digital_signature",
+    "server_auth",
+  ]
+}
+
+resource "aws_acm_certificate" "app_cert" {
+  private_key      = tls_private_key.app_key.private_key_pem
+  certificate_body = tls_self_signed_cert.app_cert.cert_pem
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+# HTTP listener that redirects to HTTPS
+resource "aws_lb_listener" "app_listener_http" {
   load_balancer_arn = aws_lb.app_alb.arn
   port              = 80
   protocol          = "HTTP"
+
+  default_action {
+    type = "redirect"
+
+    redirect {
+      port        = "443"
+      protocol    = "HTTPS"
+      status_code = "HTTP_301"
+    }
+  }
+}
+
+# HTTPS listener
+resource "aws_lb_listener" "app_listener_https" {
+  load_balancer_arn = aws_lb.app_alb.arn
+  port              = 443
+  protocol          = "HTTPS"
+  ssl_policy        = "ELBSecurityPolicy-TLS-1-2-2017-01"
+  certificate_arn   = aws_acm_certificate.app_cert.arn
 
   default_action {
     type             = "forward"
@@ -409,8 +483,18 @@ resource "aws_codedeploy_deployment_group" "app_deployment_group" {
   }
 }
 
+resource "aws_kms_key" "sns_key" {
+  description = "KMS key for SNS topic encryption"
+}
+
+resource "aws_kms_alias" "sns_key_alias" {
+  name          = "alias/sns-encryption-key"
+  target_key_id = aws_kms_key.sns_key.key_id
+}
+
 resource "aws_sns_topic" "deployment_notifications" {
-  name = "deployment-notifications"
+  name              = "deployment-notifications"
+  kms_master_key_id = aws_kms_key.sns_key.arn
 }
 
 resource "aws_cloudwatch_event_rule" "codedeploy_notifications" {
