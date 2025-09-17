@@ -4,6 +4,21 @@ provider "aws" {
 
 data "aws_availability_zones" "available" {}
 
+data "aws_ami" "ubuntu" {
+  most_recent = true
+  owners      = ["099720109477"]
+
+  filter {
+    name   = "name"
+    values = ["ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*"]
+  }
+
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
+  }
+}
+
 resource "aws_vpc" "main" {
   cidr_block           = "10.0.0.0/16"
   enable_dns_support   = true
@@ -40,10 +55,12 @@ resource "aws_route_table_association" "public" {
   subnet_id      = aws_subnet.public[count.index].id
   route_table_id = aws_route_table.public.id
 }
+
 resource "aws_iam_instance_profile" "ec2_codedeploy_profile" {
   name = "ec2-codedeploy-profile-new"
   role = aws_iam_role.ec2_codedeploy_role.name
 }
+
 resource "aws_iam_role" "ec2_codedeploy_role" {
   name = "ec2-codedeploy-role"
 
@@ -58,44 +75,38 @@ resource "aws_iam_role" "ec2_codedeploy_role" {
     }]
   })
 }
+
 resource "aws_iam_role_policy" "ec2_codedeploy_policy" {
   name = "ec2-codedeploy-policy"
   role = aws_iam_role.ec2_codedeploy_role.id
 
   policy = jsonencode({
     Version = "2012-10-17",
-    Statement = [
-      {
-        Effect = "Allow",
-        Action = [
-          "s3:GetObject",
-          "s3:GetObjectVersion",
-          "s3:PutObject",
-          "s3:ListBucket",
-          "codedeploy:CreateDeployment",
-          "codedeploy:GetApplication",
-          "codedeploy:GetApplicationRevision",
-          "codedeploy:GetDeployment",
-          "codedeploy:GetDeploymentConfig",
-          "codedeploy:RegisterApplicationRevision",
-          "ec2:DescribeInstanceStatus",
-          "ec2:DescribeInstances",
-          "ec2:CreateTags",
-          "tag:GetResources",
-          "autoscaling:*",
-          "ssm:UpdateInstanceInformation",
-          "ssm:SendCommand",
-          "ssm:ListCommands",
-          "ssm:ListCommandInvocations",
-          "ssm:DescribeInstanceInformation",
-          "ssm:GetCommandInvocation",
-          "ssm:DescribeCommands"
-        ],
-        Resource = "*"
-      }
-    ]
+    Statement = [{
+      Effect = "Allow",
+      Action = [
+        "s3:GetObject",
+        "s3:GetObjectVersion",
+        "s3:ListBucket",
+        "codedeploy:*",
+        "ec2:DescribeInstanceStatus",
+        "ec2:DescribeInstances",
+        "ec2:CreateTags",
+        "tag:GetResources",
+        "autoscaling:*",
+        "ssm:UpdateInstanceInformation",
+        "ssm:SendCommand",
+        "ssm:ListCommands",
+        "ssm:ListCommandInvocations",
+        "ssm:DescribeInstanceInformation",
+        "ssm:GetCommandInvocation",
+        "ssm:DescribeCommands"
+      ],
+      Resource = "*"
+    }]
   })
 }
+
 resource "aws_security_group" "ec2_sg" {
   name        = "ec2-sg"
   description = "Allow HTTP and SSH"
@@ -122,47 +133,25 @@ resource "aws_security_group" "ec2_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 }
+
 resource "aws_launch_template" "html_template" {
   name_prefix   = "html-launch-template-"
-  image_id      = "ami-0bc691261a82b32bc"
+  image_id      = data.aws_ami.ubuntu.id
   instance_type = "t2.micro"
 
   vpc_security_group_ids = [aws_security_group.ec2_sg.id]
-  user_data = base64encode(<<-EOF
-#!/bin/bash
-set -e
-exec > >(tee /var/log/user-data.log) 2>&1
 
-echo "Starting user data script..."
+  block_device_mappings {
+    device_name = "/dev/sda1"
+    ebs {
+      volume_size = 20
+      volume_type = "gp3"
+      delete_on_termination = true
+    }
+  }
 
-# Update system
-apt update -y
-apt install -y nginx ruby-full wget awscli
-
-# Install CodeDeploy agent
-echo "Installing CodeDeploy agent..."
-cd /tmp
-wget https://aws-codedeploy-eu-west-1.s3.eu-west-1.amazonaws.com/latest/install
-chmod +x ./install
-./install auto
-
-# Create application directory
-mkdir -p /var/www/html
-chown www-data:www-data /var/www/html
-
-# Start and enable nginx
-echo "Starting nginx..."
-systemctl start nginx
-systemctl enable nginx
-
-# Start and enable CodeDeploy agent
-echo "Starting CodeDeploy agent..."
-systemctl start codedeploy-agent
-systemctl enable codedeploy-agent
-
-echo "User data script completed successfully"
-EOF
-  )
+  user_data = base64encode("user_data.sh")
+    #<<-EOF EOF
   
   iam_instance_profile {
     name = aws_iam_instance_profile.ec2_codedeploy_profile.name
@@ -257,22 +246,6 @@ resource "aws_lb_listener" "app_listener" {
   default_action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.app_tg.arn
-  }
-}
-
-resource "aws_cloudwatch_metric_alarm" "cpu_alarm" {
-  alarm_name          = "high-cpu-utilization"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 2
-  metric_name         = "CPUUtilization"
-  namespace           = "AWS/EC2"
-  period              = 120
-  statistic           = "Average"
-  threshold           = 50
-  alarm_description   = "Alarm when CPU exceeds 50%"
-
-  dimensions = {
-    AutoScalingGroupName = aws_autoscaling_group.html_asg.name
   }
 }
 
@@ -470,54 +443,4 @@ resource "aws_codedeploy_deployment_group" "app_deployment_group_new" {
   }
 
   deployment_config_name = "CodeDeployDefault.OneAtATime"
-}
-
-resource "aws_sns_topic" "deployment_notifications" {
-  name = "deployment-notifications"
-}
-
-resource "aws_cloudwatch_event_rule" "codedeploy_notifications" {
-  name = "codedeploy-notifications-rule"
-
-  event_pattern = jsonencode({
-    source      = ["aws.codedeploy"]
-    detail-type = ["CodeDeploy Deployment State-change Notification"]
-    detail = {
-      state = ["SUCCESS", "FAILURE", "STOPPED"]
-    }
-  })
-}
-
-resource "aws_cloudwatch_event_target" "sns" {
-  rule      = aws_cloudwatch_event_rule.codedeploy_notifications.name
-  target_id = "SendToSNS"
-  arn       = aws_sns_topic.deployment_notifications.arn
-}
-
-variable "notification_email" {
-  description = "Email address for deployment notifications"
-  type        = string
-  default     = "rupa-sri.nunna@capgemini.com"
-}
-
-resource "aws_sns_topic_subscription" "email" {
-  topic_arn = aws_sns_topic.deployment_notifications.arn
-  protocol  = "email"
-  endpoint  = var.notification_email
-}
-
-resource "aws_sns_topic_policy" "deployment_notifications_policy" {
-  arn = aws_sns_topic.deployment_notifications.arn
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Principal = {
-        Service = "events.amazonaws.com"
-      }
-      Action   = "SNS:Publish"
-      Resource = aws_sns_topic.deployment_notifications.arn
-    }]
-  })
 }
