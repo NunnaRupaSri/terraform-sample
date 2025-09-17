@@ -41,7 +41,7 @@ resource "aws_route_table_association" "public" {
   route_table_id = aws_route_table.public.id
 }
 resource "aws_iam_instance_profile" "ec2_codedeploy_profile" {
-  name = "ec2-codedeploy-profile-role"
+  name = "ec2-codedeploy-profile"
   role = aws_iam_role.ec2_codedeploy_role.name
 }
 resource "aws_iam_role" "ec2_codedeploy_role" {
@@ -128,7 +128,41 @@ resource "aws_launch_template" "html_template" {
   instance_type = "t2.micro"
 
   vpc_security_group_ids = [aws_security_group.ec2_sg.id]
-  user_data              = filebase64("user_data.sh")
+  user_data = base64encode(<<-EOF
+#!/bin/bash
+set -e
+exec > >(tee /var/log/user-data.log) 2>&1
+
+echo "Starting user data script..."
+
+# Update system
+apt update -y
+apt install -y nginx ruby-full wget awscli
+
+# Install CodeDeploy agent
+echo "Installing CodeDeploy agent..."
+cd /tmp
+wget https://aws-codedeploy-eu-west-1.s3.eu-west-1.amazonaws.com/latest/install
+chmod +x ./install
+./install auto
+
+# Create application directory
+mkdir -p /var/www/html
+chown www-data:www-data /var/www/html
+
+# Start and enable nginx
+echo "Starting nginx..."
+systemctl start nginx
+systemctl enable nginx
+
+# Start and enable CodeDeploy agent
+echo "Starting CodeDeploy agent..."
+systemctl start codedeploy-agent
+systemctl enable codedeploy-agent
+
+echo "User data script completed successfully"
+EOF
+  )
   
   iam_instance_profile {
     name = aws_iam_instance_profile.ec2_codedeploy_profile.name
