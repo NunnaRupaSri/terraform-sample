@@ -11,6 +11,7 @@ chmod +x ./install
 # Create application directory
 mkdir -p /var/www/html
 chown ubuntu:ubuntu /var/www/html
+cd /var/www/html
 
 # Start and enable nginx
 systemctl start nginx
