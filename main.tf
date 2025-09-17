@@ -110,7 +110,7 @@ resource "aws_security_group" "ec2_sg" {
 }
 resource "aws_launch_template" "nodejs_template" {
   name_prefix   = "nodejs-launch-template-"
-  image_id      = "ami-03aa99ddf5498ceb9"
+  image_id      = "ami-0bc691261a82b32bc"
   instance_type = "t2.micro"
 
   vpc_security_group_ids = [aws_security_group.ec2_sg.id]
@@ -271,17 +271,16 @@ resource "aws_codepipeline" "app_pipeline" {
     type     = "S3"
   }
 
-  depends_on = [aws_codestarconnections_connection.github]
-
   stage {
     name = "Source"
     action {
       name             = "GitHub_Source"
       category         = "Source"
-      owner            = "AWS"
-      provider         = "CodeStarSource"
+      owner            = "ThirdParty"
+      provider         = "GitHub"
       version          = "1"
       output_artifacts = ["source_output"]
+
 
       configuration = {
         ConnectionArn     = aws_codestarconnections_connection.github.arn
