@@ -41,7 +41,7 @@ resource "aws_route_table_association" "public" {
   route_table_id = aws_route_table.public.id
 }
 resource "aws_iam_instance_profile" "ec2_codedeploy_profile" {
-  name = "ec2-codedeploy-profile"
+  name = "ec2-codedeploy-profile-new"
   role = aws_iam_role.ec2_codedeploy_role.name
 }
 resource "aws_iam_role" "ec2_codedeploy_role" {
@@ -405,7 +405,7 @@ resource "aws_codepipeline" "app_pipeline" {
 
       configuration = {
         ApplicationName     = aws_codedeploy_app.app.name
-        DeploymentGroupName = aws_codedeploy_deployment_group.app_deployment_group.deployment_group_name
+        DeploymentGroupName = aws_codedeploy_deployment_group.app_deployment_group_new.deployment_group_name
       }
     }
   }
@@ -458,24 +458,18 @@ resource "aws_codedeploy_app" "app" {
   compute_platform = "Server"
 }
 
-resource "aws_codedeploy_deployment_group" "app_deployment_group" {
+resource "aws_codedeploy_deployment_group" "app_deployment_group_new" {
   app_name              = aws_codedeploy_app.app.name
-  deployment_group_name = "html-app-deployment-group"
+  deployment_group_name = "html-app-deployment-group-v2"
   service_role_arn      = aws_iam_role.codedeploy_service_role.arn
 
-  ec2_tag_set {
-    ec2_tag_filter {
-      key   = "Name"
-      type  = "KEY_AND_VALUE"
-      value = "HTMLAppInstance"
-    }
+  ec2_tag_filter {
+    key   = "Name"
+    type  = "KEY_AND_VALUE"
+    value = "HTMLAppInstance"
   }
 
   deployment_config_name = "CodeDeployDefault.OneAtATime"
-
-  lifecycle {
-    ignore_changes = [deployment_config_name]
-  }
 }
 
 resource "aws_sns_topic" "deployment_notifications" {
