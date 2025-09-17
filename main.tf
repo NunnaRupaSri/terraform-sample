@@ -361,7 +361,9 @@ resource "aws_iam_role_policy" "codepipeline_policy" {
         "logs:PutLogEvents",
         "s3:*",
         "ec2:*",
-        "iam:PassRole"
+        "iam:PassRole",
+        "kms:Decrypt",
+        "kms:GenerateDataKey"
       ],
       Resource = "*"
     }]
@@ -453,21 +455,14 @@ resource "aws_codepipeline" "app_pipeline" {
   }
 }
 
-resource "aws_kms_key" "codebuild_key" {
-  description = "KMS key for CodeBuild encryption"
-}
 
-resource "aws_kms_alias" "codebuild_key_alias" {
-  name          = "alias/codebuild-encryption-key"
-  target_key_id = aws_kms_key.codebuild_key.key_id
-}
 
 resource "aws_codebuild_project" "app_build_project" {
   name          = "app-build-project"
   description   = "Build project for HTML app"
   build_timeout = 20
   service_role  = aws_iam_role.codepipeline_role.arn
-  encryption_key = aws_kms_key.codebuild_key.arn
+
 
   artifacts {
     type = "CODEPIPELINE"
@@ -510,18 +505,11 @@ resource "aws_codedeploy_deployment_group" "app_deployment_group" {
   }
 }
 
-resource "aws_kms_key" "sns_key" {
-  description = "KMS key for SNS topic encryption"
-}
 
-resource "aws_kms_alias" "sns_key_alias" {
-  name          = "alias/sns-encryption-key"
-  target_key_id = aws_kms_key.sns_key.key_id
-}
 
 resource "aws_sns_topic" "deployment_notifications" {
   name              = "deployment-notifications"
-  kms_master_key_id = aws_kms_key.sns_key.arn
+
 }
 
 resource "aws_cloudwatch_event_rule" "codedeploy_notifications" {
