@@ -1,3 +1,3 @@
 #!/bin/bash
-yum update -y
-yum install -y nodejs npm
+apt update -y
+apt install -y nodejs npm
