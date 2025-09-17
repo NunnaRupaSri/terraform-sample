@@ -7,13 +7,14 @@ hooks:
   AfterInstall:
     - location: scripts/install_ngnix.sh
       timeout: 180
-      runas: ubuntu
+      runas: root
   ApplicationStart:
     - location: scripts/start_nginx.sh
       timeout: 180
-      runas: ubuntu
+      runas: root
   ApplicationStop:
     - location: scripts/stop_nginx.sh
       timeout: 180
-      runas: ubuntu
+      runas: root
+
 
