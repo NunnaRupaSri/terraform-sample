@@ -1,2 +1,2 @@
 #!/bin/bash
-npm stop || true
+sudo systemctl stop nginx || true
