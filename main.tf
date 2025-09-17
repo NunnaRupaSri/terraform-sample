@@ -240,10 +240,7 @@ resource "aws_iam_role_policy" "codepipeline_policy" {
         "ec2:*",
         "iam:PassRole"
       ],
-      Resource = [
-        "*",
-        "arn:aws:codeconnections:eu-west-1:881128007213:connection/efb32c5d-73f0-4971-9053-cade720fae55"
-      ]
+      Resource = "*"
     }]
   })
 }
@@ -264,8 +261,9 @@ variable "github_branch" {
   default     = "main"
 }
 
-data "aws_codestarconnections_connection" "github" {
-  arn = "arn:aws:codestar-connections:eu-west-1:881128007213:connection/efb32c5d-73f0-4971-9053-cade720fae55"
+resource "aws_codestarconnections_connection" "github" {
+  name          = "github-connection"
+  provider_type = "GitHub"
 }
 
 resource "aws_codepipeline" "app_pipeline" {
@@ -313,6 +311,11 @@ resource "aws_codepipeline" "app_pipeline" {
   }
 }
 
+resource "aws_cloudwatch_log_group" "codebuild_log_group" {
+  name              = "/aws/codebuild/app-build-project"
+  retention_in_days = 14
+}
+
 resource "aws_codebuild_project" "app_build_project" {
   name          = "app-build-project"
   description   = "Build project for Node.js app"
@@ -332,6 +335,12 @@ resource "aws_codebuild_project" "app_build_project" {
   source {
     type      = "CODEPIPELINE"
     buildspec = "buildspec.yml"
+  }
+
+  logs_config {
+    cloudwatch_logs {
+      group_name = aws_cloudwatch_log_group.codebuild_log_group.name
+    }
   }
 }
 
