@@ -1,2 +1,2 @@
 #!/bin/bash
-sudo service stop nginx 
+sudo service nginx stop
