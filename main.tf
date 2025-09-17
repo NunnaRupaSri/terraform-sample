@@ -326,15 +326,7 @@ resource "aws_s3_bucket" "pipeline_artifacts" {
   bucket = "pipeline-artifacts-bucket-${random_id.suffix.hex}"
 }
 
-resource "aws_s3_bucket_server_side_encryption_configuration" "pipeline_artifacts_encryption" {
-  bucket = aws_s3_bucket.pipeline_artifacts.id
 
-  rule {
-    apply_server_side_encryption_by_default {
-      sse_algorithm = "AES256"
-    }
-  }
-}
 
 resource "aws_iam_role" "codepipeline_role" {
   name = "codepipeline-role"
