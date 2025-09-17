@@ -1,3 +1,3 @@
 #!/bin/bash
-cd /home/ec2-user/nodejs-app
-npm install
+yum update -y
+yum install -y nodejs npm
