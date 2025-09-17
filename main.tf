@@ -68,14 +68,15 @@ resource "aws_iam_role_policy" "ec2_codedeploy_policy" {
       {
         Effect = "Allow",
         Action = [
-          "s3:Get*",
-          "s3:List*",
-          "codedeploy:PutLifecycleEventHookExecutionStatus",
-          "codedeploy:UpdateDeploymentGroup",
-          "codedeploy:GetDeploymentGroup",
-          "codedeploy:GetDeployment",
-          "codedeploy:RegisterApplicationRevision",
-          "codedeploy:GetApplicationRevision"
+          "s3:GetObject",
+          "s3:GetObjectVersion",
+          "s3:ListBucket",
+          "codedeploy:*",
+          "ec2:DescribeInstanceStatus",
+          "ec2:DescribeInstances",
+          "ec2:CreateTags",
+          "tag:GetResources",
+          "autoscaling:*"
         ],
         Resource = "*"
       }
@@ -114,9 +115,9 @@ resource "aws_launch_template" "nodejs_template" {
   instance_type = "t2.micro"
 
   vpc_security_group_ids = [aws_security_group.ec2_sg.id]
-  user_data              = filebase64("user_data.sh")
+  user_data              = filebase64("scripts/install.sh")
   
-iam_instance_profile {
+  iam_instance_profile {
     name = aws_iam_instance_profile.ec2_codedeploy_profile.name
   }
 
@@ -153,10 +154,31 @@ resource "aws_autoscaling_group" "nodejs_asg" {
   force_delete              = true
 }
 
+resource "aws_security_group" "alb_sg" {
+  name        = "alb-sg"
+  description = "Allow HTTP traffic for ALB"
+  vpc_id      = aws_vpc.main.id
+
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
 resource "aws_lb" "app_alb" {
   name               = "app-alb"
   internal           = false
   load_balancer_type = "application"
+  security_groups    = [aws_security_group.alb_sg.id]
   subnets            = aws_subnet.public[*].id
   tags = { Name = "app-alb" }
 }
@@ -166,6 +188,18 @@ resource "aws_lb_target_group" "app_tg" {
   port     = 80
   protocol = "HTTP"
   vpc_id   = aws_vpc.main.id
+
+  health_check {
+    enabled             = true
+    healthy_threshold   = 2
+    interval            = 30
+    matcher             = "200"
+    path                = "/"
+    port                = "traffic-port"
+    protocol            = "HTTP"
+    timeout             = 5
+    unhealthy_threshold = 2
+  }
 }
 
 resource "aws_lb_listener" "app_listener" {
@@ -369,28 +403,44 @@ resource "aws_codedeploy_deployment_group" "app_deployment_group" {
   }
 
   deployment_config_name = "CodeDeployDefault.OneAtATime"
+
+  lifecycle {
+    ignore_changes = [deployment_config_name]
+  }
 }
 
 resource "aws_sns_topic" "deployment_notifications" {
   name = "deployment-notifications"
 }
 
-resource "aws_cloudwatch_event_rule" "codedeploy_success" {
-  name = "codedeploy-success-rule"
+resource "aws_cloudwatch_event_rule" "codedeploy_notifications" {
+  name = "codedeploy-notifications-rule"
 
   event_pattern = jsonencode({
     source      = ["aws.codedeploy"]
     detail-type = ["CodeDeploy Deployment State-change Notification"]
     detail = {
-      state = ["SUCCESS"]
+      state = ["SUCCESS", "FAILURE", "STOPPED"]
     }
   })
 }
 
 resource "aws_cloudwatch_event_target" "sns" {
-  rule      = aws_cloudwatch_event_rule.codedeploy_success.name
+  rule      = aws_cloudwatch_event_rule.codedeploy_notifications.name
   target_id = "SendToSNS"
   arn       = aws_sns_topic.deployment_notifications.arn
+}
+
+variable "notification_email" {
+  description = "Email address for deployment notifications"
+  type        = string
+  default     = "rupa-sri.nunna@capgemini.com"
+}
+
+resource "aws_sns_topic_subscription" "email" {
+  topic_arn = aws_sns_topic.deployment_notifications.arn
+  protocol  = "email"
+  endpoint  = var.notification_email
 }
 
 resource "aws_sns_topic_policy" "deployment_notifications_policy" {
