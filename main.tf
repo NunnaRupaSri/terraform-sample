@@ -309,11 +309,23 @@ resource "aws_codepipeline" "app_pipeline" {
       }
     }
   }
-}
 
-resource "aws_cloudwatch_log_group" "codebuild_log_group" {
-  name              = "/aws/codebuild/app-build-project"
-  retention_in_days = 14
+  stage {
+    name = "Deploy"
+    action {
+      name            = "CodeDeploy"
+      category        = "Deploy"
+      owner           = "AWS"
+      provider        = "CodeDeploy"
+      input_artifacts = ["build_output"]
+      version         = "1"
+
+      configuration = {
+        ApplicationName     = aws_codedeploy_app.app.name
+        DeploymentGroupName = aws_codedeploy_deployment_group.app_deployment_group.deployment_group_name
+      }
+    }
+  }
 }
 
 resource "aws_codebuild_project" "app_build_project" {
@@ -336,12 +348,6 @@ resource "aws_codebuild_project" "app_build_project" {
     type      = "CODEPIPELINE"
     buildspec = "buildspec.yml"
   }
-
-  logs_config {
-    cloudwatch_logs {
-      group_name = aws_cloudwatch_log_group.codebuild_log_group.name
-    }
-  }
 }
 
 resource "aws_codedeploy_app" "app" {
@@ -363,4 +369,42 @@ resource "aws_codedeploy_deployment_group" "app_deployment_group" {
   }
 
   deployment_config_name = "CodeDeployDefault.OneAtATime"
+}
+
+resource "aws_sns_topic" "deployment_notifications" {
+  name = "deployment-notifications"
+}
+
+resource "aws_cloudwatch_event_rule" "codedeploy_success" {
+  name = "codedeploy-success-rule"
+
+  event_pattern = jsonencode({
+    source      = ["aws.codedeploy"]
+    detail-type = ["CodeDeploy Deployment State-change Notification"]
+    detail = {
+      state = ["SUCCESS"]
+    }
+  })
+}
+
+resource "aws_cloudwatch_event_target" "sns" {
+  rule      = aws_cloudwatch_event_rule.codedeploy_success.name
+  target_id = "SendToSNS"
+  arn       = aws_sns_topic.deployment_notifications.arn
+}
+
+resource "aws_sns_topic_policy" "deployment_notifications_policy" {
+  arn = aws_sns_topic.deployment_notifications.arn
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Service = "events.amazonaws.com"
+      }
+      Action   = "SNS:Publish"
+      Resource = aws_sns_topic.deployment_notifications.arn
+    }]
+  })
 }
