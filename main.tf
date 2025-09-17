@@ -17,6 +17,10 @@ provider "aws" {
 
 provider "tls" {}
 
+resource "random_id" "suffix" {
+  byte_length = 4
+}
+
 data "aws_availability_zones" "available" {}
 
 resource "aws_vpc" "main" {
@@ -60,7 +64,7 @@ resource "aws_iam_instance_profile" "ec2_codedeploy_profile" {
   role = aws_iam_role.ec2_codedeploy_role.name
 }
 resource "aws_iam_role" "ec2_codedeploy_role" {
-  name = "ec2-codedeploy-role"
+  name = "ec2-codedeploy-role-${random_id.suffix.hex}"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17",
@@ -124,8 +128,8 @@ resource "aws_security_group" "ec2_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 }
-resource "aws_launch_template" "nodejs_template" {
-  name_prefix   = "nodejs-launch-template-"
+resource "aws_launch_template" "html_template" {
+  name_prefix   = "html-launch-template-"
   image_id      = "ami-0bc691261a82b32bc"
   instance_type = "t2.micro"
 
@@ -139,20 +143,20 @@ resource "aws_launch_template" "nodejs_template" {
   tag_specifications {
     resource_type = "instance"
     tags = {
-      Name = "NodeJSAppInstance"
+      Name = "HTMLAppInstance"
     }
   }
 }
 
-resource "aws_autoscaling_group" "nodejs_asg" {
-  name                      = "nodejs-asg"
+resource "aws_autoscaling_group" "html_asg" {
+  name                      = "html-asg"
   max_size                  = 3
   min_size                  = 2
   desired_capacity          = 2
   vpc_zone_identifier       = aws_subnet.public[*].id
 
   launch_template {
-    id      = aws_launch_template.nodejs_template.id
+    id      = aws_launch_template.html_template.id
     version = "$Latest"
   }
 
@@ -160,7 +164,7 @@ resource "aws_autoscaling_group" "nodejs_asg" {
 
   tag {
     key                 = "Name"
-    value               = "NodeJSAppInstance"
+    value               = "HTMLAppInstance"
     propagate_at_launch = true
   }
 
@@ -197,7 +201,7 @@ resource "aws_security_group" "alb_sg" {
 }
 
 resource "aws_lb" "app_alb" {
-  name               = "app-alb"
+  name               = "app-alb-${random_id.suffix.hex}"
   internal           = false
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb_sg.id]
@@ -206,7 +210,7 @@ resource "aws_lb" "app_alb" {
 }
 
 resource "aws_lb_target_group" "app_tg" {
-  name     = "app-tg"
+  name     = "app-tg-${random_id.suffix.hex}"
   port     = 80
   protocol = "HTTP"
   vpc_id   = aws_vpc.main.id
@@ -299,12 +303,8 @@ resource "aws_cloudwatch_metric_alarm" "cpu_alarm" {
   alarm_description   = "Alarm when CPU exceeds 70%"
 
   dimensions = {
-    AutoScalingGroupName = aws_autoscaling_group.nodejs_asg.name
+    AutoScalingGroupName = aws_autoscaling_group.html_asg.name
   }
-}
-
-resource "random_id" "suffix" {
-  byte_length = 4
 }
 
 resource "aws_s3_bucket" "pipeline_artifacts" {
@@ -312,7 +312,7 @@ resource "aws_s3_bucket" "pipeline_artifacts" {
 }
 
 resource "aws_iam_role" "codepipeline_role" {
-  name = "codepipeline-role"
+  name = "codepipeline-role-${random_id.suffix.hex}"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17",
@@ -356,11 +356,13 @@ resource "aws_iam_role_policy" "codepipeline_policy" {
 variable "github_owner" {
   description = "GitHub repository owner"
   type        = string
+  default     = "NunnaRupaSri"
 }
 
 variable "github_repo" {
   description = "GitHub repository name"
   type        = string
+  default     = "terraform-sample"
 }
 
 variable "github_branch" {
@@ -438,7 +440,7 @@ resource "aws_codepipeline" "app_pipeline" {
 
 resource "aws_codebuild_project" "app_build_project" {
   name          = "app-build-project"
-  description   = "Build project for Node.js app"
+  description   = "Build project for HTML app"
   build_timeout = 20
   service_role  = aws_iam_role.codepipeline_role.arn
 
@@ -459,20 +461,20 @@ resource "aws_codebuild_project" "app_build_project" {
 }
 
 resource "aws_codedeploy_app" "app" {
-  name             = "nodejs-app"
+  name             = "html-app"
   compute_platform = "Server"
 }
 
 resource "aws_codedeploy_deployment_group" "app_deployment_group" {
   app_name              = aws_codedeploy_app.app.name
-  deployment_group_name = "nodejs-app-deployment-group"
+  deployment_group_name = "html-app-deployment-group"
   service_role_arn      = aws_iam_role.codepipeline_role.arn
 
   ec2_tag_set {
     ec2_tag_filter {
       key   = "Name"
       type  = "KEY_AND_VALUE"
-      value = "NodeJSAppInstance"
+      value = "HTMLAppInstance"
     }
   }
 
