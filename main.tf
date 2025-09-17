@@ -75,7 +75,7 @@ resource "aws_route_table_association" "public" {
   route_table_id = aws_route_table.public.id
 }
 resource "aws_iam_instance_profile" "ec2_codedeploy_profile" {
-  name = "ec2-codedeploy-profile"
+  name = "ec2-codedeploy-profile-role"
   role = aws_iam_role.ec2_codedeploy_role.name
 }
 resource "aws_iam_role" "ec2_codedeploy_role" {
@@ -324,6 +324,16 @@ resource "aws_cloudwatch_metric_alarm" "cpu_alarm" {
 
 resource "aws_s3_bucket" "pipeline_artifacts" {
   bucket = "pipeline-artifacts-bucket-${random_id.suffix.hex}"
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "pipeline_artifacts_encryption" {
+  bucket = aws_s3_bucket.pipeline_artifacts.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
 }
 
 resource "aws_iam_role" "codepipeline_role" {
