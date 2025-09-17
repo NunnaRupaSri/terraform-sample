@@ -213,7 +213,8 @@ resource "aws_iam_role" "codepipeline_role" {
       Principal = { Service = [
         "codepipeline.amazonaws.com",
         "codebuild.amazonaws.com",
-        "codedeploy.amazonaws.com"
+        "codedeploy.amazonaws.com",
+        "codestar-connections.amazonaws.com"
       ] },
       Action = "sts:AssumeRole"
     }]
@@ -232,6 +233,7 @@ resource "aws_iam_role_policy" "codepipeline_policy" {
         "codebuild:*",
         "codedeploy:*",
         "codepipeline:*",
+        "codestar-connections:UseConnection",
         "s3:*",
         "ec2:*",
         "iam:PassRole"
@@ -276,16 +278,15 @@ resource "aws_codepipeline" "app_pipeline" {
     action {
       name             = "GitHub_Source"
       category         = "Source"
-      owner            = "ThirdParty"
-      provider         = "GitHub"
+      owner            = "AWS"
+      provider         = "CodeStarSourceConnection"
       version          = "1"
       output_artifacts = ["source_output"]
 
-
       configuration = {
-        ConnectionArn     = aws_codestarconnections_connection.github.arn
-        FullRepositoryId  = "${var.github_owner}/${var.github_repo}"
-        BranchName        = var.github_branch
+        ConnectionArn    = aws_codestarconnections_connection.github.arn
+        FullRepositoryId = "${var.github_owner}/${var.github_repo}"
+        BranchName       = var.github_branch
       }
     }
   }
