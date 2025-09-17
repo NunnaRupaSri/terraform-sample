@@ -1,3 +1,4 @@
 #!/bin/bash
-cd /home/ec2-user/nodejs-app
-npm run start &
+cd /var/www/html
+npm install
+sudo npm start > /var/log/nodejs-app.log 2>&1 &
