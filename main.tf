@@ -86,21 +86,7 @@ resource "aws_iam_role_policy" "ec2_codedeploy_policy" {
       Effect = "Allow",
       Action = [
         "s3:GetObject",
-        "s3:GetObjectVersion",
-        "s3:ListBucket",
-        "codedeploy:*",
-        "ec2:DescribeInstanceStatus",
-        "ec2:DescribeInstances",
-        "ec2:CreateTags",
-        "tag:GetResources",
-        "autoscaling:*",
-        "ssm:UpdateInstanceInformation",
-        "ssm:SendCommand",
-        "ssm:ListCommands",
-        "ssm:ListCommandInvocations",
-        "ssm:DescribeInstanceInformation",
-        "ssm:GetCommandInvocation",
-        "ssm:DescribeCommands"
+        "s3:ListBucket"
       ],
       Resource = "*"
     }]
@@ -144,14 +130,31 @@ resource "aws_launch_template" "html_template" {
   block_device_mappings {
     device_name = "/dev/sda1"
     ebs {
-      volume_size = 20
+      volume_size = 8
       volume_type = "gp3"
       delete_on_termination = true
     }
   }
 
-  user_data = base64encode("user_data.sh")
-    #<<-EOF EOF
+  user_data = base64encode(<<-EOF
+#!/bin/bash
+apt update -y
+apt install -y nginx ruby-full wget awscli
+
+cd /tmp
+wget https://aws-codedeploy-eu-west-1.s3.eu-west-1.amazonaws.com/latest/install
+chmod +x ./install
+./install auto
+
+mkdir -p /var/www/html
+chown www-data:www-data /var/www/html
+
+systemctl start nginx
+systemctl enable nginx
+systemctl start codedeploy-agent
+systemctl enable codedeploy-agent
+EOF
+  )
   
   iam_instance_profile {
     name = aws_iam_instance_profile.ec2_codedeploy_profile.name
@@ -177,7 +180,7 @@ resource "aws_autoscaling_group" "html_asg" {
     version = "$Latest"
   }
 
-  target_group_arns         = [aws_lb_target_group.app_tg.arn]
+  target_group_arns         = [aws_lb_target_group.app_tg_1.arn, aws_lb_target_group.app_tg_2.arn]
 
   tag {
     key                 = "Name"
@@ -219,8 +222,27 @@ resource "aws_lb" "app_alb" {
   tags = { Name = "app-alb" }
 }
 
-resource "aws_lb_target_group" "app_tg" {
-  name     = "app-tg"
+resource "aws_lb_target_group" "app_tg_1" {
+  name     = "app-tg-1"
+  port     = 80
+  protocol = "HTTP"
+  vpc_id   = aws_vpc.main.id
+
+  health_check {
+    enabled             = true
+    healthy_threshold   = 2
+    interval            = 30
+    matcher             = "200"
+    path                = "/"
+    port                = "traffic-port"
+    protocol            = "HTTP"
+    timeout             = 5
+    unhealthy_threshold = 2
+  }
+}
+
+resource "aws_lb_target_group" "app_tg_2" {
+  name     = "app-tg-2"
   port     = 80
   protocol = "HTTP"
   vpc_id   = aws_vpc.main.id
@@ -244,8 +266,17 @@ resource "aws_lb_listener" "app_listener" {
   protocol          = "HTTP"
 
   default_action {
-    type             = "forward"
-    target_group_arn = aws_lb_target_group.app_tg.arn
+    type = "forward"
+    forward {
+      target_group {
+        arn    = aws_lb_target_group.app_tg_1.arn
+        weight = 50
+      }
+      target_group {
+        arn    = aws_lb_target_group.app_tg_2.arn
+        weight = 50
+      }
+    }
   }
 }
 
@@ -283,16 +314,19 @@ resource "aws_iam_role_policy" "codepipeline_policy" {
     Statement = [{
       Effect = "Allow",
       Action = [
-        "codebuild:*",
-        "codedeploy:*",
-        "codepipeline:*",
+        "codebuild:BatchGetBuilds",
+        "codebuild:StartBuild",
+        "codedeploy:CreateDeployment",
+        "codedeploy:GetApplication",
+        "codedeploy:GetApplicationRevision",
+        "codedeploy:GetDeployment",
+        "codedeploy:GetDeploymentConfig",
+        "codedeploy:RegisterApplicationRevision",
         "codestar-connections:UseConnection",
-        "logs:CreateLogGroup",
-        "logs:CreateLogStream",
-        "logs:PutLogEvents",
-        "s3:*",
-        "ec2:*",
-        "iam:PassRole"
+        "s3:GetBucketVersioning",
+        "s3:GetObject",
+        "s3:GetObjectVersion",
+        "s3:PutObject"
       ],
       Resource = "*"
     }]
@@ -424,6 +458,22 @@ resource "aws_iam_role" "codedeploy_service_role" {
 resource "aws_iam_role_policy_attachment" "codedeploy_service_role_policy" {
   role       = aws_iam_role.codedeploy_service_role.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSCodeDeployRole"
+}
+
+resource "aws_cloudwatch_metric_alarm" "cpu_alarm" {
+  alarm_name          = "high-cpu-utilization"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = "2"
+  metric_name         = "CPUUtilization"
+  namespace           = "AWS/EC2"
+  period              = "300"
+  statistic           = "Average"
+  threshold           = "50"
+  alarm_description   = "This metric monitors ec2 cpu utilization"
+  
+  dimensions = {
+    AutoScalingGroupName = aws_autoscaling_group.html_asg.name
+  }
 }
 
 resource "aws_codedeploy_app" "app" {
