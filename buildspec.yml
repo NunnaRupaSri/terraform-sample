@@ -2,13 +2,12 @@ version: 0.2
 
 phases:
   install:
-    runtime-versions:
-      nodejs: 18
     commands:
-      - npm install
+      - echo Installing dependencies
   build:
     commands:
       - echo Build completed on `date`
+      - echo Preparing nginx files
 
 artifacts:
   files:
