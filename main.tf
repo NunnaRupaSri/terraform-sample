@@ -1,12 +1,28 @@
-
 provider "aws" {
-  region = "us-east-2"
+  region = "us-west-2"
 }
 
 data "aws_availability_zones" "available" {}
+
+resource "aws_vpc" "main" {
+  cidr_block           = "10.0.0.0/16"
+  enable_dns_support   = true
+  enable_dns_hostnames = true
+  tags = { Name = "main-vpc" }
+}
+
 resource "aws_internet_gateway" "main" {
   vpc_id = aws_vpc.main.id
   tags = { Name = "main-igw" }
+}
+
+resource "aws_subnet" "public" {
+  count                   = 2
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = cidrsubnet(aws_vpc.main.cidr_block, 8, count.index)
+  availability_zone       = data.aws_availability_zones.available.names[count.index]
+  map_public_ip_on_launch = true
+  tags = { Name = "public-subnet-${count.index}" }
 }
 
 resource "aws_route_table" "public" {
@@ -24,23 +40,48 @@ resource "aws_route_table_association" "public" {
   subnet_id      = aws_subnet.public[count.index].id
   route_table_id = aws_route_table.public.id
 }
-
-resource "aws_vpc" "main" {
-  cidr_block           = "10.0.0.0/16"
-  enable_dns_support   = true
-  enable_dns_hostnames = true
-  tags = { Name = "main-vpc" }
+resource "aws_iam_instance_profile" "ec2_codedeploy_profile" {
+  name = "ec2-codedeploy-profile"
+  role = aws_iam_role.ec2_codedeploy_role.name
 }
+resource "aws_iam_role" "ec2_codedeploy_role" {
+  name = "ec2-codedeploy-role"
 
-resource "aws_subnet" "public" {
-  count                   = 2
-  vpc_id                  = aws_vpc.main.id
-  cidr_block              = cidrsubnet(aws_vpc.main.cidr_block, 8, count.index)
-  availability_zone       = data.aws_availability_zones.available.names[count.index]
-  map_public_ip_on_launch = true
-  tags = { Name = "public-subnet-${count.index}" }
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [{
+      Effect = "Allow",
+      Principal = {
+        Service = "ec2.amazonaws.com"
+      },
+      Action = "sts:AssumeRole"
+    }]
+  })
 }
+resource "aws_iam_role_policy" "ec2_codedeploy_policy" {
+  name = "ec2-codedeploy-policy"
+  role = aws_iam_role.ec2_codedeploy_role.id
 
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect = "Allow",
+        Action = [
+          "s3:Get*",
+          "s3:List*",
+          "codedeploy:PutLifecycleEventHookExecutionStatus",
+          "codedeploy:UpdateDeploymentGroup",
+          "codedeploy:GetDeploymentGroup",
+          "codedeploy:GetDeployment",
+          "codedeploy:RegisterApplicationRevision",
+          "codedeploy:GetApplicationRevision"
+        ],
+        Resource = "*"
+      }
+    ]
+  })
+}
 resource "aws_security_group" "ec2_sg" {
   name        = "ec2-sg"
   description = "Allow HTTP and SSH"
@@ -59,7 +100,7 @@ resource "aws_security_group" "ec2_sg" {
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
-
+   
   egress {
     from_port   = 0
     to_port     = 0
@@ -67,14 +108,49 @@ resource "aws_security_group" "ec2_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 }
+resource "aws_launch_template" "nodejs_template" {
+  name_prefix   = "nodejs-launch-template-"
+  image_id      = "ami-03aa99ddf5498ceb9"
+  instance_type = "t2.micro"
 
-resource "aws_instance" "nodejs_ec2" {
-  ami                         = "ami-0fc5d935ebf8bc3bc"
-  instance_type               = "t2.micro"
-  subnet_id                   = aws_subnet.public[0].id
-  vpc_security_group_ids      = [aws_security_group.ec2_sg.id]
-  user_data                   = file("user_data.sh")
-  tags = { Name = "NodeJSAppInstance" }
+  vpc_security_group_ids = [aws_security_group.ec2_sg.id]
+  user_data              = filebase64("user_data.sh")
+  
+iam_instance_profile {
+    name = aws_iam_instance_profile.ec2_codedeploy_profile.name
+  }
+
+  tag_specifications {
+    resource_type = "instance"
+    tags = {
+      Name = "NodeJSAppInstance"
+    }
+  }
+}
+
+resource "aws_autoscaling_group" "nodejs_asg" {
+  name                      = "nodejs-asg"
+  max_size                  = 3
+  min_size                  = 2
+  desired_capacity          = 2
+  vpc_zone_identifier       = aws_subnet.public[*].id
+
+  launch_template {
+    id      = aws_launch_template.nodejs_template.id
+    version = "$Latest"
+  }
+
+  target_group_arns         = [aws_lb_target_group.app_tg.arn]
+
+  tag {
+    key                 = "Name"
+    value               = "NodeJSAppInstance"
+    propagate_at_launch = true
+  }
+
+  health_check_type         = "EC2"
+  health_check_grace_period = 300
+  force_delete              = true
 }
 
 resource "aws_lb" "app_alb" {
@@ -113,25 +189,18 @@ resource "aws_cloudwatch_metric_alarm" "cpu_alarm" {
   statistic           = "Average"
   threshold           = 70
   alarm_description   = "Alarm when CPU exceeds 70%"
+
   dimensions = {
-    InstanceId = aws_instance.nodejs_ec2.id
+    AutoScalingGroupName = aws_autoscaling_group.nodejs_asg.name
   }
 }
 
-resource "aws_secretsmanager_secret" "github_token" {
-  name = "github-token"
-}
-
-resource "aws_secretsmanager_secret_version" "github_token_version" {
-  secret_id     = aws_secretsmanager_secret.github_token.id
-  secret_string = var.github_token
+resource "random_id" "suffix" {
+  byte_length = 4
 }
 
 resource "aws_s3_bucket" "pipeline_artifacts" {
   bucket = "pipeline-artifacts-bucket-${random_id.suffix.hex}"
-}
-resource "random_id" "suffix" {
-  byte_length = 4
 }
 
 resource "aws_iam_role" "codepipeline_role" {
@@ -142,10 +211,10 @@ resource "aws_iam_role" "codepipeline_role" {
     Statement = [{
       Effect = "Allow",
       Principal = { Service = [
-            "codepipeline.amazonaws.com",
-            "codebuild.amazonaws.com",
-            "codedeploy.amazonaws.com"
-          ] },
+        "codepipeline.amazonaws.com",
+        "codebuild.amazonaws.com",
+        "codedeploy.amazonaws.com"
+      ] },
       Action = "sts:AssumeRole"
     }]
   })
@@ -157,21 +226,21 @@ resource "aws_iam_role_policy" "codepipeline_policy" {
 
   policy = jsonencode({
     Version = "2012-10-17",
-    Statement = [
-      {
-        Effect = "Allow",
-        Action = [
-          "codebuild:*",
-          "codedeploy:*",
-          "codepipeline:*",
-          "s3:*",
-          "ec2:*",
-          "iam:PassRole"
-        ],
-        Resource = "*"
+    Statement = [{
+      Effect = "Allow",
+      Action = [
+        "codebuild:*",
+        "codedeploy:*",
+        "codepipeline:*",
+        "s3:*",
+        "ec2:*",
+        "iam:PassRole"
+      ],
+      Resource = "*"
     }]
   })
 }
+
 variable "github_owner" {
   description = "GitHub repository owner"
   type        = string
@@ -182,16 +251,15 @@ variable "github_repo" {
   type        = string
 }
 
-variable "github_token" {
-  description = "GitHub OAuth token for CodePipeline"
-  type        = string
-  sensitive   = true
-}
-
 variable "github_branch" {
   description = "GitHub branch to use for source"
   type        = string
   default     = "main"
+}
+
+resource "aws_codestarconnections_connection" "github" {
+  name          = "github-connection"
+  provider_type = "GitHub"
 }
 
 resource "aws_codepipeline" "app_pipeline" {
@@ -203,21 +271,22 @@ resource "aws_codepipeline" "app_pipeline" {
     type     = "S3"
   }
 
+  depends_on = [aws_codestarconnections_connection.github]
+
   stage {
     name = "Source"
     action {
       name             = "GitHub_Source"
       category         = "Source"
-      owner            = "ThirdParty"
-      provider         = "GitHub"
+      owner            = "AWS"
+      provider         = "CodeStarSource"
       version          = "1"
       output_artifacts = ["source_output"]
 
       configuration = {
-        Owner      = var.github_owner
-        Repo       = var.github_repo
-        Branch     = var.github_branch
-        OAuthToken = aws_secretsmanager_secret_version.github_token_version.secret_string
+        ConnectionArn     = aws_codestarconnections_connection.github.arn
+        FullRepositoryId  = "${var.github_owner}/${var.github_repo}"
+        BranchName        = var.github_branch
       }
     }
   }
@@ -232,6 +301,7 @@ resource "aws_codepipeline" "app_pipeline" {
       input_artifacts  = ["source_output"]
       output_artifacts = ["build_output"]
       version          = "1"
+
       configuration = {
         ProjectName = aws_codebuild_project.app_build_project.name
       }
@@ -250,26 +320,26 @@ resource "aws_codebuild_project" "app_build_project" {
   }
 
   environment {
-    compute_type                = "BUILD_GENERAL1_SMALL"
-    image                       = "aws/codebuild/standard:7.0"
-    type                        = "LINUX_CONTAINER"
+    compute_type = "BUILD_GENERAL1_SMALL"
+    image        = "aws/codebuild/standard:7.0"
+    type         = "LINUX_CONTAINER"
   }
 
   source {
-    type            = "CODEPIPELINE"
-    buildspec       = "buildspec.yml"
+    type      = "CODEPIPELINE"
+    buildspec = "buildspec.yml"
   }
 }
 
 resource "aws_codedeploy_app" "app" {
-  name = "nodejs-app"
+  name             = "nodejs-app"
   compute_platform = "Server"
 }
 
 resource "aws_codedeploy_deployment_group" "app_deployment_group" {
-  app_name               = aws_codedeploy_app.app.name
-  deployment_group_name  = "nodejs-app-deployment-group"
-  service_role_arn       = aws_iam_role.codepipeline_role.arn
+  app_name              = aws_codedeploy_app.app.name
+  deployment_group_name = "nodejs-app-deployment-group"
+  service_role_arn      = aws_iam_role.codepipeline_role.arn
 
   ec2_tag_set {
     ec2_tag_filter {
