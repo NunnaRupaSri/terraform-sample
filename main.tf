@@ -23,6 +23,21 @@ resource "random_id" "suffix" {
 
 data "aws_availability_zones" "available" {}
 
+data "aws_ami" "ubuntu" {
+  most_recent = true
+  owners      = ["099720109477"] # Canonical
+
+  filter {
+    name   = "name"
+    values = ["ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*"]
+  }
+
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
+  }
+}
+
 resource "aws_vpc" "main" {
   cidr_block           = "10.0.0.0/16"
   enable_dns_support   = true
@@ -64,7 +79,7 @@ resource "aws_iam_instance_profile" "ec2_codedeploy_profile" {
   role = aws_iam_role.ec2_codedeploy_role.name
 }
 resource "aws_iam_role" "ec2_codedeploy_role" {
-  name = "ec2-codedeploy-role-${random_id.suffix.hex}"
+  name = "ec2-codedeploy-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17",
@@ -130,7 +145,7 @@ resource "aws_security_group" "ec2_sg" {
 }
 resource "aws_launch_template" "html_template" {
   name_prefix   = "html-launch-template-"
-  image_id      = "ami-0bc691261a82b32bc"
+  image_id      = data.aws_ami.ubuntu.id
   instance_type = "t2.micro"
 
   vpc_security_group_ids = [aws_security_group.ec2_sg.id]
@@ -201,7 +216,7 @@ resource "aws_security_group" "alb_sg" {
 }
 
 resource "aws_lb" "app_alb" {
-  name               = "app-alb-${random_id.suffix.hex}"
+  name               = "app-alb"
   internal           = false
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb_sg.id]
@@ -210,7 +225,7 @@ resource "aws_lb" "app_alb" {
 }
 
 resource "aws_lb_target_group" "app_tg" {
-  name     = "app-tg-${random_id.suffix.hex}"
+  name     = "app-tg"
   port     = 80
   protocol = "HTTP"
   vpc_id   = aws_vpc.main.id
@@ -312,7 +327,7 @@ resource "aws_s3_bucket" "pipeline_artifacts" {
 }
 
 resource "aws_iam_role" "codepipeline_role" {
-  name = "codepipeline-role-${random_id.suffix.hex}"
+  name = "codepipeline-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17",
@@ -438,11 +453,21 @@ resource "aws_codepipeline" "app_pipeline" {
   }
 }
 
+resource "aws_kms_key" "codebuild_key" {
+  description = "KMS key for CodeBuild encryption"
+}
+
+resource "aws_kms_alias" "codebuild_key_alias" {
+  name          = "alias/codebuild-encryption-key"
+  target_key_id = aws_kms_key.codebuild_key.key_id
+}
+
 resource "aws_codebuild_project" "app_build_project" {
   name          = "app-build-project"
   description   = "Build project for HTML app"
   build_timeout = 20
   service_role  = aws_iam_role.codepipeline_role.arn
+  encryption_key = aws_kms_key.codebuild_key.arn
 
   artifacts {
     type = "CODEPIPELINE"
@@ -520,7 +545,6 @@ resource "aws_cloudwatch_event_target" "sns" {
 variable "notification_email" {
   description = "Email address for deployment notifications"
   type        = string
-  default     = "rupa-sri.nunna@capgemini.com"
 }
 
 resource "aws_sns_topic_subscription" "email" {
