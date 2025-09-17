@@ -1,9 +1,9 @@
 #!/bin/bash
 apt update -y
-apt install -y nginx ruby wget awscli
+apt install -y nginx ruby-full wget awscli curl
 
 # Install CodeDeploy agent
-cd /home/ubuntu
+cd /tmp
 wget https://aws-codedeploy-eu-west-1.s3.eu-west-1.amazonaws.com/latest/install
 chmod +x ./install
 ./install auto
@@ -17,13 +17,11 @@ cd /var/www/html
 systemctl start nginx
 systemctl enable nginx
 
-# Start and enable CodeDeploy agent
-systemctl start codedeploy-agent
-systemctl enable codedeploy-agent
-
-# Wait and restart agent
-sleep 10
-systemctl restart codedeploy-agent
+# Start CodeDeploy agent
+service codedeploy-agent start
+service codedeploy-agent status
+sleep 5
+service codedeploy-agent restart
 
 # Tag instance for CodeDeploy
 INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
