@@ -1,6 +1,6 @@
 #!/bin/bash
 apt update -y
-apt install -y nodejs npm ruby wget awscli
+apt install -y nginx ruby wget awscli
 
 # Install CodeDeploy agent
 cd /home/ubuntu
@@ -11,6 +11,10 @@ chmod +x ./install
 # Create application directory
 mkdir -p /var/www/html
 chown ubuntu:ubuntu /var/www/html
+
+# Start and enable nginx
+systemctl start nginx
+systemctl enable nginx
 
 # Start and enable CodeDeploy agent
 systemctl start codedeploy-agent
