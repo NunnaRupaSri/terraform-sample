@@ -361,9 +361,7 @@ resource "aws_iam_role_policy" "codepipeline_policy" {
         "logs:PutLogEvents",
         "s3:*",
         "ec2:*",
-        "iam:PassRole",
-        "kms:Decrypt",
-        "kms:GenerateDataKey"
+        "iam:PassRole"
       ],
       Resource = "*"
     }]
