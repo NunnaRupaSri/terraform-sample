@@ -82,7 +82,14 @@ resource "aws_iam_role_policy" "ec2_codedeploy_policy" {
           "ec2:DescribeInstances",
           "ec2:CreateTags",
           "tag:GetResources",
-          "autoscaling:*"
+          "autoscaling:*",
+          "ssm:UpdateInstanceInformation",
+          "ssm:SendCommand",
+          "ssm:ListCommands",
+          "ssm:ListCommandInvocations",
+          "ssm:DescribeInstanceInformation",
+          "ssm:GetCommandInvocation",
+          "ssm:DescribeCommands"
         ],
         Resource = "*"
       }
