@@ -213,8 +213,7 @@ resource "aws_iam_role" "codepipeline_role" {
       Principal = { Service = [
         "codepipeline.amazonaws.com",
         "codebuild.amazonaws.com",
-        "codedeploy.amazonaws.com",
-        "codestar-connections.amazonaws.com"
+        "codedeploy.amazonaws.com"
       ] },
       Action = "sts:AssumeRole"
     }]
@@ -234,11 +233,17 @@ resource "aws_iam_role_policy" "codepipeline_policy" {
         "codedeploy:*",
         "codepipeline:*",
         "codestar-connections:UseConnection",
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents",
         "s3:*",
         "ec2:*",
         "iam:PassRole"
       ],
-      Resource = "*"
+      Resource = [
+        "*",
+        "arn:aws:codeconnections:eu-west-1:881128007213:connection/efb32c5d-73f0-4971-9053-cade720fae55"
+      ]
     }]
   })
 }
@@ -259,9 +264,8 @@ variable "github_branch" {
   default     = "main"
 }
 
-resource "aws_codestarconnections_connection" "github" {
-  name          = "github-connection"
-  provider_type = "GitHub"
+data "aws_codestarconnections_connection" "github" {
+  arn = "arn:aws:codestar-connections:eu-west-1:881128007213:connection/efb32c5d-73f0-4971-9053-cade720fae55"
 }
 
 resource "aws_codepipeline" "app_pipeline" {
