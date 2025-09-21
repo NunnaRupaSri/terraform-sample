@@ -349,7 +349,7 @@ variable "github_owner" {
 variable "github_repo" {
   description = "GitHub repository name"
   type        = string
-  default     = "terraform-sample"
+  default     = "My-little-project"
 }
 
 variable "github_branch" {
