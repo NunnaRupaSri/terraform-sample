@@ -2,13 +2,22 @@ version: 0.2
 
 phases:
   install:
+    runtime-versions:
+      java: corretto11
     commands:
-      - echo Installing dependencies
+      - echo Installing system dependencies
+      - apt-get update -y
   build:
     commands:
       - echo Build completed on `date`
       - echo Preparing nginx files
+      - echo Validating configuration files
 
 artifacts:
   files:
-    - '**/*'
+    - index.html
+    - appspec.yml
+    - scripts/install_nginx.sh
+    - scripts/start_nginx.sh
+    - scripts/stop_nginx.sh
+  name: nginx-app-$(date +%Y-%m-%d)

@@ -1,4 +1,5 @@
 #!/bin/bash
-
-sudo apt-get update
-sudo apt-get install -y nginx
+apt update -y
+apt install -y nginx
+systemctl start nginx
+systemctl enable nginx

@@ -5,7 +5,7 @@ files:
     destination: /var/www/html
 hooks:
   AfterInstall:
-    - location: scripts/install_ngnix.sh
+    - location: scripts/install_nginx.sh
       timeout: 180
       runas: ubuntu
   ApplicationStart:
